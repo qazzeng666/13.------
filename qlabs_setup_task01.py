@@ -280,12 +280,15 @@ def setup(
     QLabsRealTime().start_real_time_model(rtModel)
 
     # 所有对象生成完毕后，再错峰启动行人/动物往返线程（避免与主线程抢套接字）
-    # 统一滞后5秒启动，使行人/奶牛的穿行与车辆到达路口的时间对齐，便于体现识别停车
+    # 统一基础滞后5秒；点9(中央西)和点15(右上三叉)处的行人再额外滞后5秒，
+    # 使其穿行与车辆到达时间对齐，便于体现识别停车。
+    # 顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
+    patrol_delays = [9.0, 5.8, 10.6, 6.4]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(
             target=_pedestrian_patrol,
-            args=(p, start, other, speed, 1.0, 5.0 + idx * 0.8),
+            args=(p, start, other, speed, 1.0, patrol_delays[idx]),
             daemon=True
         )
         t.start()
