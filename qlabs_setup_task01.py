@@ -80,15 +80,18 @@ def _set_light_color(light, color):
 
 
 def _traffic_light_cycle(ns_lights, ew_lights,
-                          green_sec=5.0, yellow_sec=1.5, all_red_sec=1.0):
+                          green_sec=5.0, yellow_sec=1.5, all_red_sec=1.0,
+                          initial_delay=0.0):
     """后台线程：按标准时序循环切换红绿灯颜色。
 
     时序：NS绿/EW红 → NS黄/EW红 → 全红 → EW绿/NS红 → EW黄/NS红 → 全红 → 循环。
+    initial_delay：启动后延迟多少秒再开始第一个周期（用于与车辆到达时间对齐）。
     """
     def _set_group(group, color):
         for light in group:
             _set_light_color(light, color)
 
+    time.sleep(initial_delay)
     while True:
         # 1) 南北向放行
         _set_group(ns_lights, QLabsTrafficLight.COLOR_GREEN)
@@ -277,11 +280,12 @@ def setup(
     QLabsRealTime().start_real_time_model(rtModel)
 
     # 所有对象生成完毕后，再错峰启动行人/动物往返线程（避免与主线程抢套接字）
+    # 统一滞后5秒启动，使行人/奶牛的穿行与车辆到达路口的时间对齐，便于体现识别停车
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(
             target=_pedestrian_patrol,
-            args=(p, start, other, speed, 1.0, idx * 0.8),
+            args=(p, start, other, speed, 1.0, 5.0 + idx * 0.8),
             daemon=True
         )
         t.start()
@@ -295,6 +299,7 @@ def setup(
     tl_thread = threading.Thread(
         target=_traffic_light_cycle,
         args=(ns_lights, ew_lights),
+        kwargs={'initial_delay': 5.0},  # 红绿灯也滞后5秒，与车辆到达对齐
         daemon=True
     )
     tl_thread.start()
