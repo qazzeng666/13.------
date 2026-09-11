@@ -79,7 +79,7 @@ initialPose = [0.0, 0.13, -np.pi / 2]
 RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
-PEDESTRIAN_STOP_AREA = 5.0
+PEDESTRIAN_STOP_AREA = 3.0
 PEDESTRIAN_CENTER_TOL = 0.45
 # 以下雷达参数仅用于建图显示；雷达不参与刹车（避免弯道路缘误停）
 LIDAR_OBSTACLE_DIST = 1.0
@@ -120,6 +120,7 @@ _state = {
     'map_dirty': False,
     'actual_pos': None,
     'actual_th': 0,
+    'steering_delta': 0.0,
 }
 _actual_traj = [[], []]
 
@@ -207,7 +208,7 @@ def yolo_detect(hqcar, model):
         _, img = hqcar.get_image(4)
     if img is None or img.size == 0:
         return [], None
-    result = model.predict(source=img, verbose=False, save=False)
+    result = model.predict(source=img, verbose=False, save=False, conf=0.4)
     detected = []
     try:
         boxes = result[0].boxes
@@ -230,20 +231,23 @@ def yolo_detect(hqcar, model):
 
 #region : 停车条件判断（连续帧 + 迟滞）
 
-def check_raw_stop_condition(detected, img, lidar_dist=None, lidar_ang=None):
+def check_raw_stop_condition(detected, img, steering_delta=0.0):
     """只基于 YOLO 视觉判断是否停车（红绿灯/行人/奶牛）。
     雷达仅用于文件夹12式建图显示，不参与刹车——城市道路弯道处的路缘/墙
     会在正前方产生成片近点，用雷达刹车会在弯道永久误停。
+    steering_delta：当前转向角（正=左转，负=右转）。右转时允许闯红灯（红灯可右转）。
     返回 (raw_stop, reason_en)；reason 用英文以便 cv2.putText 正常显示。"""
     if img is None:
         return False, ''
     img_h, img_w = img.shape[:2]
     has_green = any(c == YoloObject.GREEN for c, _, _ in detected)
+    turning_right = steering_delta < -0.15  # 右转超过约8.6°时，红灯不停车
 
-    # 1. 红灯（绿灯优先覆盖）
-    for cls_id, area_pct, _ in detected:
-        if cls_id == YoloObject.RED and area_pct >= RED_LIGHT_STOP_AREA and not has_green:
-            return True, 'RED LIGHT'
+    # 1. 红灯（绿灯优先覆盖；右转时忽略红灯）
+    if not turning_right:
+        for cls_id, area_pct, _ in detected:
+            if cls_id == YoloObject.RED and area_pct >= RED_LIGHT_STOP_AREA and not has_green:
+                return True, 'RED LIGHT'
 
     # 2. 行人/奶牛：正前方 + 够近
     for cls_id, area_pct, (x1,y1,x2,y2) in detected:
@@ -307,7 +311,10 @@ def perceptionLoop(hqcar, model, gps, og):
                     _state['patch_img'] = expit(og.patch)
 
             # ---- 停车条件判断：纯 YOLO 视觉（红绿灯/行人/奶牛）----
-            raw_stop, reason = check_raw_stop_condition(detected, img)
+            # 右转时允许闯红灯（红灯可右转），传入当前转向角
+            with _lock:
+                cur_delta = _state.get('steering_delta', 0.0)
+            raw_stop, reason = check_raw_stop_condition(detected, img, cur_delta)
             update_stop_state(raw_stop, reason)
 
             with _lock:
@@ -390,6 +397,10 @@ def controlLoop(gps):
                     delta = 0  # 停车时同时回正方向盘，避免保持转弯
 
                 qcar.write(u, delta)
+
+                # 实时共享转向角，供感知线程判断是否在右转（右转时允许闯红灯）
+                with _lock:
+                    _state['steering_delta'] = delta
 
                 # 每2秒一次心跳，定位退出前最后位置
                 if t - last_hb >= 2:
