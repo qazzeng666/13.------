@@ -223,11 +223,13 @@ def setup(
         location=[21.733, 3.347, 0.02], rotation=[0, 0, 0],
         scale=[1, 1, 0.75], configuration=0, waitForConfirmation=True)
 
-    # ---- 右上三叉（T 型）路口：只保留 1 个红绿灯，面向南方（服务由北向南来车）----
-    # 路口中心约 (21.2, 18.5)，灯放在北进口东侧车道，yaw=0 即面向南方
+    # ---- 右上三叉（T 型）路口：只保留 1 个红绿灯，面向南方（服务由南向北来车）----
+    # 路口中心约 (21.2, 18.5)，灯放在斑马线旁东南角，靠近北行车道，
+    # 车辆到停止线(y≈14)时距灯仅约3m，YOLO可稳定识别灯色。
+    # yaw=0 即灯面朝向南方，北行车辆迎面可见。
     tl_t_upper = QLabsTrafficLight(qlabs)
     tl_t_upper.spawn_id_degrees(
-        actorNumber=6, location=[24.0, 20.8, 0], rotation=[0, 0, 0],
+        actorNumber=6, location=[24.0, 16.5, 0], rotation=[0, 0, 0],
         configuration=0, waitForConfirmation=True)
     tl_t_upper.set_color(tl_t_upper.COLOR_GREEN)
     lights.append(tl_t_upper)
@@ -280,10 +282,10 @@ def setup(
     QLabsRealTime().start_real_time_model(rtModel)
 
     # 所有对象生成完毕后，再错峰启动行人/动物往返线程（避免与主线程抢套接字）
-    # 统一基础滞后5秒；点9(中央西)和点15(右上三叉)处的行人再额外滞后5秒，
-    # 使其穿行与车辆到达时间对齐，便于体现识别停车。
-    # 顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
-    patrol_delays = [9.0, 5.8, 10.6, 6.4]
+    # 延迟按车辆实际到达各路口的时间反推，使行人/奶牛正好走到马路中间时与车辆相遇，
+    # 体现"识别并避让"。顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
+    # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 奶牛≈36s
+    patrol_delays = [14.75, 5.25, 11.75, 0.5]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(
