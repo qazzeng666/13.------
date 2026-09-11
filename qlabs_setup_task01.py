@@ -260,15 +260,14 @@ def setup(
         patrol_plan.append((p, start, other, p.WALK))
 
     # ---- 点22附近穿行马路的奶牛（K04：动物专用类，可用 move_to 行走）----
-    # 点22在西侧南北向道路，QLabs 世界坐标约 (-19.9, 29.7)，该处道路为南北向；
-    # 奶牛沿东西向（x 轴）从道路西侧路边走到东侧路边再折返，与道路垂直横穿，
-    # 两端延伸到路缘以外，确保奶牛完全离开路面、车辆可驶过。
+    # 点22在西侧道路 QLabs(-19.9, 29.7)，从点20过来的斜向道路在 x≈-15 处汇入；
+    # 奶牛放在该斜向道路上，沿东西向（x 轴）横穿马路，固定 y=33。
     animals = []
-    cow_start = [-25.0, 29.7, 0.005]
-    cow_other = [-15.0, 29.7, 0.005]
+    cow_start = [-20.0, 33.0, 0.005]
+    cow_other = [-10.0, 33.0, 0.005]
     cow = QLabsAnimal(qlabs)
     cow.spawn_id(actorNumber=13, location=cow_start,
-                  rotation=[0, 0, math.pi/2], scale=[1, 1, 1],
+                  rotation=[0, 0, 0], scale=[1, 1, 1],
                   configuration=cow.COW, waitForConfirmation=True)
     animals.append(cow)
     patrol_plan.append((cow, cow_start, cow_other, cow.COW_WALK))
@@ -284,8 +283,8 @@ def setup(
     # 所有对象生成完毕后，再错峰启动行人/动物往返线程（避免与主线程抢套接字）
     # 延迟按车辆实际到达各路口的时间反推，使行人/奶牛正好走到马路中间时与车辆相遇，
     # 体现"识别并避让"。顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
-    # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 点22奶牛≈52s
-    patrol_delays = [14.75, 5.25, 5.75, 3.75]
+    # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 点22奶牛≈51s
+    patrol_delays = [14.75, 5.25, 5.75, 10.0]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(

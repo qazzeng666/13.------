@@ -79,7 +79,7 @@ initialPose = [0.0, 0.13, -np.pi / 2]
 RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
-PEDESTRIAN_STOP_AREA = 3.0
+PEDESTRIAN_STOP_AREA = 1.5
 PEDESTRIAN_CENTER_TOL = 0.45
 # 以下雷达参数仅用于建图显示；雷达不参与刹车（避免弯道路缘误停）
 LIDAR_OBSTACLE_DIST = 1.0
