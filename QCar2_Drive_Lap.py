@@ -79,8 +79,10 @@ initialPose = [0.0, 0.13, -np.pi / 2]
 RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
-PEDESTRIAN_STOP_AREA = 1.5
+PEDESTRIAN_STOP_AREA = 1.2
 PEDESTRIAN_CENTER_TOL = 0.45
+# 终点 stop 牌检测框占画面面积达到该百分比才停车（stop牌在路边，不需中心容差）
+STOP_SIGN_STOP_AREA = 0.5
 # 以下雷达参数仅用于建图显示；雷达不参与刹车（避免弯道路缘误停）
 LIDAR_OBSTACLE_DIST = 1.0
 LIDAR_OBSTACLE_FOV = 36
@@ -241,7 +243,7 @@ def check_raw_stop_condition(detected, img, steering_delta=0.0):
         return False, ''
     img_h, img_w = img.shape[:2]
     has_green = any(c == YoloObject.GREEN for c, _, _ in detected)
-    turning_right = steering_delta < -0.15  # 右转超过约8.6°时，红灯不停车
+    turning_right = steering_delta < -0.05  # 右转超过约2.9°时，红灯不停车
 
     # 1. 红灯（绿灯优先覆盖；右转时忽略红灯）
     if not turning_right:
@@ -415,7 +417,23 @@ def controlLoop(gps):
                     count = 0
 
                 if driveController.steeringController.pathComplete:
-                    log('路径 0→20→0 完成，车辆停止。')
+                    log('路径完成，直行回正后停车。')
+                    # 先直行1秒把车身走直（方向盘回正），再刹车停稳
+                    for _ in range(30):  # 约0.6秒，直行回正
+                        try:
+                            qcar.write(0.08, 0)
+                        except Exception:
+                            pass
+                        time.sleep(0.02)
+                    # 强制停车：持续发送throttle=0约3秒，确保车完全停稳
+                    for _ in range(150):
+                        try:
+                            qcar.write(0, 0)
+                        except Exception:
+                            pass
+                        time.sleep(0.02)
+                    log('车辆已停稳，停留5秒后退出。')
+                    time.sleep(5.0)
                     break
         except Exception:
             import traceback

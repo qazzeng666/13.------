@@ -14,6 +14,7 @@ from qvl.crosswalk import QLabsCrosswalk
 from qvl.traffic_light import QLabsTrafficLight
 from qvl.person import QLabsPerson
 from qvl.animal import QLabsAnimal
+from qvl.stop_sign import QLabsStopSign
 import pal.resources.rtmodels as rtmodels
 #endregion
 
@@ -234,6 +235,12 @@ def setup(
     tl_t_upper.set_color(tl_t_upper.COLOR_GREEN)
     lights.append(tl_t_upper)
     # 右下三叉路口：按要求不放置红绿灯（仅保留斑马线）
+
+    # ---- 终点 stop 牌（场景装饰，车辆靠路径完成自动停车，不靠视觉识别）----
+    stop_sign = QLabsStopSign(qlabs)
+    stop_sign.spawn_id_degrees(
+        actorNumber=20, location=[-2.0, -1.5, 0], rotation=[0, 0, 90],
+        configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
     # 注意：路面 z=0，人行道比路面高；起终点必须落在路面（斑马线）范围内，
