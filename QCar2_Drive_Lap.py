@@ -317,7 +317,7 @@ def perceptionLoop(hqcar, model, gps, og):
                     _state['patch_img'] = expit(og.patch)
 
             # ---- 停车条件判断：纯 YOLO 视觉（红绿灯/行人/奶牛）----
-            # 右转时允许闯红灯（红灯可右转），传入当前转向角
+            # 右转时允许闯红灯（红灯可右转），传入当前转向角和车辆位置
             with _lock:
                 cur_delta = _state.get('steering_delta', 0.0)
             raw_stop, reason = check_raw_stop_condition(detected, img, cur_delta)
@@ -366,6 +366,8 @@ def controlLoop(gps):
 
     ekf = QCarEKF(x_0=initialPose)
     driveController = QCarDriveController(waypointSequence, cyclic=False)
+    # 增大速度环比例增益，让刹车时减速更快（默认Kp=0.1偏小，刹车偏慢）
+    driveController.speedController.Kp = 0.25
     qcar = QCar(readMode=1, frequency=controllerUpdateRate)
 
     with qcar:
@@ -411,7 +413,8 @@ def controlLoop(gps):
                     u, delta = driveController.update(p, th, v, target_v, dt)
 
                 if stop_now:
-                    u = 0
+                    # 保留PID负值主动制动（比u=0滑行更快停住），限制最大刹车力度
+                    u = max(u, -0.15)
                     delta = 0  # 停车时同时回正方向盘，避免保持转弯
 
                 # 锥桶两阶段绕行：先左转绕开，再右转越过锥桶回正
@@ -421,13 +424,15 @@ def controlLoop(gps):
                     avoid_straight = _state.get('avoid_straight_until', 0)
                     avoid_right = _state.get('avoid_right_until', 0)
                 if not stop_now and now_ctrl < avoid_left:
-                    delta += 0.45  # 阶段1：左转绕到锥桶左侧
+                    delta += 0.5  # 阶段1：左转绕到锥桶左侧
                 elif not stop_now and now_ctrl < avoid_straight:
                     pass  # 阶段2：直行越过锥桶，不叠加转向
                 elif not stop_now and now_ctrl < avoid_right:
                     delta -= 0.20  # 阶段3：右转回正
 
-                qcar.write(u, delta)
+                # LED：刹车时亮刹车灯(4)，其余关
+                LEDs = [0,0,0,0, 1 if stop_now else 0, 0, 0, 0]
+                qcar.write(u, delta, LEDs)
 
                 # 实时共享转向角，供感知线程判断是否在右转（右转时允许闯红灯）
                 with _lock:
