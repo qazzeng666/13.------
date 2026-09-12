@@ -247,8 +247,8 @@ def setup(
     # 点20 QLabs(0, 45)，放在西侧路边（车辆右侧通行）
     cone = QLabsTrafficCone(qlabs)
     cone.spawn_id_degrees(
-        actorNumber=21, location=[-1.5, 45.0, 0], rotation=[0, 0, 0],
-        scale=[4, 4, 4], configuration=0, waitForConfirmation=True)
+        actorNumber=21, location=[-0.5, 45.0, 0], rotation=[0, 0, 0],
+        scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
     # 注意：路面 z=0，人行道比路面高；起终点必须落在路面（斑马线）范围内，
