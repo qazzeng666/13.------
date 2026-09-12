@@ -15,6 +15,7 @@ from qvl.traffic_light import QLabsTrafficLight
 from qvl.person import QLabsPerson
 from qvl.animal import QLabsAnimal
 from qvl.stop_sign import QLabsStopSign
+from qvl.traffic_cone import QLabsTrafficCone
 import pal.resources.rtmodels as rtmodels
 #endregion
 
@@ -241,6 +242,13 @@ def setup(
     stop_sign.spawn_id_degrees(
         actorNumber=20, location=[-2.0, -1.5, 0], rotation=[0, 0, 90],
         configuration=0, waitForConfirmation=True)
+
+    # ---- 点20处锥桶（K05：交通设施）----
+    # 点20 QLabs(0, 45)，放在西侧路边（车辆右侧通行）
+    cone = QLabsTrafficCone(qlabs)
+    cone.spawn_id_degrees(
+        actorNumber=21, location=[-1.5, 45.0, 0], rotation=[0, 0, 0],
+        scale=[4, 4, 4], configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
     # 注意：路面 z=0，人行道比路面高；起终点必须落在路面（斑马线）范围内，
