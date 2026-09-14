@@ -19,7 +19,7 @@ QCar2 完整一圈行驶 + 环境感知系统（YOLO视觉 + 激光雷达 + 占�
      - 左上：极坐标雷达图  - 左下：局部笛卡尔栅格  - 右侧：全局地图(绿规划+红实际)
   2. result（仿文件夹4）：YOLO 检测结果（边界框+类别+面积百分比）
 
-停车逻辑（纯 YOLO 视觉 + 连续帧检测 + 迟滞；雷达只建图不刹车）：
+停车逻辑（ YOLO 视觉 + 连续帧检测 + 迟滞；雷达只建图不刹车）：
   - 红灯连续3帧且够近 → 停车；连续10帧消失或检测到绿灯 → 继续
   - 行人/奶牛连续3帧在正前方且够近 → 停车；离开后继续
   （不在此用雷达刹车：城市弯道的路缘/墙体在正前方也会产生成片近点，会误停）
@@ -310,6 +310,27 @@ def perceptionLoop(hqcar, model, gps, og):
                     og.updateMap(px, py, th, angles, distances)
                     with _lock:
                         _state['map_dirty'] = True
+
+                # ---- 雷达测距：在YOLO检测框上标注距离 ----
+                if img is not None and len(detected) > 0:
+                    img_w = img.shape[1]
+                    CAM_FOV_HALF = np.pi/4  # 相机半视场角45°，总90°
+                    for cls_id, area_pct, (x1,y1,x2,y2) in detected:
+                        cx = (x1+x2)/2.0
+                        # 画面cx → 雷达角度（正前方=π/2）
+                        target_angle = (cx - img_w/2.0) / (img_w/2.0) * CAM_FOV_HALF + np.pi/2
+                        # 找最近的雷达索引
+                        idx = int(np.argmin(np.abs(angles - target_angle)))
+                        # 在该角度附近±3°范围内取最近的有效距离
+                        ring = distances[max(0,idx-5):min(len(distances),idx+6)]
+                        valid = ring[ring > 0.05]
+                        if len(valid) > 0:
+                            dist_m = float(valid.min())
+                            if dist_m <= 5.0:  # 超过5米（r_max）不显示，避免读到远处墙壁
+                                color = YOLO_COLORS[cls_id] if cls_id < len(YOLO_COLORS) else (255,255,255)
+                                cv2.putText(img, f'{dist_m:.1f}m',
+                                            (x1+2, y2+15), cv2.FONT_HERSHEY_SIMPLEX,
+                                            0.5, color, 1, cv2.LINE_AA)
 
                 # ---- 准备显示用图像（数据处理，非GUI）----
                 with _lock:
