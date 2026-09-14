@@ -93,7 +93,7 @@ LIDAR_OBSTACLE_MIN_POINTS = 6
 
 # 迟滞参数
 STOP_FRAMES = 2
-GO_FRAMES = 10
+GO_FRAMES = 6
 
 # 占据栅格参数（与文件夹12默认值一致）
 cellWidth = 0.02; r_res = 0.02; r_max = 5
