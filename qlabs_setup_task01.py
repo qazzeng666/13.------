@@ -29,6 +29,9 @@ import pal.resources.rtmodels as rtmodels
 # QLabs 通信层不是线程安全的（单套接字、无锁），多个行人线程发指令必须串行化
 _QLABS_LOCK = threading.Lock()
 
+# 鬼探头触发事件：由行驶文件在车辆到达触发点时set()，行人线程等待此事件
+GHOST_TRIGGER = threading.Event()
+
 
 def _send_move(person, target, speed):
     """线程安全地下发一条移动指令。
@@ -72,11 +75,19 @@ def _pedestrian_patrol(person, start, other, speed, pause=1.0, initial_delay=0.0
         time.sleep(pause)
 
 
-def _ghost_probe_run(person, start, end, speed, initial_delay):
-    """鬼探头：延迟 initial_delay 秒后，行人突然从 start 以 RUN 速度冲到 end（只冲一次）。"""
-    time.sleep(initial_delay)
-    print('[鬼探头] 行人突然冲出！')
+def _ghost_probe_run(person, start, end, speed):
+    """鬼探头：等待 GHOST_TRIGGER 事件（车辆到达触发点时由行驶文件设置），
+    然后行人突然从 start 以 RUN 速度冲到 end，停留5秒后跑回 start。"""
+    GHOST_TRIGGER.wait()
+    print('[鬼探头] 触发！行人突然冲出！')
     _send_move(person, end, speed)
+    # 横穿距离约13米，RUN速度6m/s，约2.2秒跑完
+    time.sleep(13.0 / speed + 1.0)
+    # 在东侧停留5秒（让车辆急刹等他）
+    time.sleep(5.0)
+    # 跑回建筑后方，车辆经过时已经离开车道
+    _send_move(person, start, speed)
+    print('[鬼探头] 行人已返回建筑后方')
 
 
 def _set_light_color(light, color):
@@ -294,9 +305,9 @@ def setup(
     animals.append(cow)
     patrol_plan.append((cow, cow_start, cow_other, cow.COW_WALK))
 
-    # ---- 鬼探头行人（极端场景：平时藏在点17南侧建筑旁，车辆接近时突然向东冲出）----
-    # spawn在点17南侧(12.0, 29.0)，面朝东；延迟约30秒后以RUN速度向东横穿车道到(25.0, 29.0)
-    # 车辆北行经过x≈22.5，行人从西侧建筑旁冲到车道上
+    # ---- 鬼探头行人（极端场景：平时藏在建筑物后方，车辆接近时突然向东冲出）----
+    # spawn在建筑物后方(12.0, 29.0)，面朝东；延迟约31秒后以RUN速度向东横穿车道到(25.0, 29.0)
+    # 车辆北行经过x≈22.5，行人从建筑后突然冲到车道上
     ghost_ped = QLabsPerson(qlabs)
     ghost_ped.spawn_id(actorNumber=14, location=[12.0, 29.0, 0.005],
                        rotation=[0, 0, math.radians(0)], scale=[1, 1, 1],
@@ -326,12 +337,12 @@ def setup(
         t.start()
         patrol_threads.append(t)
 
-    # ---- 鬼探头行人：延迟30秒后突然以RUN速度向东横穿车道 ----
-    # 车辆北行到达y≈27时（距行人前方约3米），行人从西侧(12.0,29.0)向东冲到(25.0,29.0)
+    # ---- 鬼探头行人：延迟31秒后突然以RUN速度向东横穿车道 ----
+    # 车辆北行到达y≈27时，行人从建筑物后方(12.0,29.0)向东冲到(25.0,29.0)
     ghost_thread = threading.Thread(
         target=_ghost_probe_run,
         args=(ghost_ped, [12.0, 29.0, 0.005], [25.0, 29.0, 0.005],
-              ghost_ped.RUN, 31.0),
+              ghost_ped.RUN),
         daemon=True
     )
     ghost_thread.start()

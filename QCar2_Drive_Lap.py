@@ -79,9 +79,9 @@ initialPose = [0.0, 0.13, -np.pi / 2]
 RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
-PEDESTRIAN_STOP_AREA = 1.2
+PEDESTRIAN_STOP_AREA = 1.5
 COW_STOP_AREA = 2.5  # 奶牛体积大，阈值更高，离得更近才停车
-PEDESTRIAN_CENTER_TOL = 0.45
+PEDESTRIAN_CENTER_TOL = 0.47
 # 终点 stop 牌检测框占画面面积达到该百分比才停车（stop牌在路边，不需中心容差）
 STOP_SIGN_STOP_AREA = 0.5
 # 锥桶绕行：cone在正前方且面积达到该百分比时，触发绕行（向左绕开）
@@ -92,7 +92,7 @@ LIDAR_OBSTACLE_FOV = 36
 LIDAR_OBSTACLE_MIN_POINTS = 6
 
 # 迟滞参数
-STOP_FRAMES = 3
+STOP_FRAMES = 2
 GO_FRAMES = 10
 
 # 占据栅格参数（与文件夹12默认值一致）
@@ -317,7 +317,6 @@ def perceptionLoop(hqcar, model, gps, og):
                     _state['patch_img'] = expit(og.patch)
 
             # ---- 停车条件判断：纯 YOLO 视觉（红绿灯/行人/奶牛）----
-            # 右转时允许闯红灯（红灯可右转），传入当前转向角和车辆位置
             with _lock:
                 cur_delta = _state.get('steering_delta', 0.0)
             raw_stop, reason = check_raw_stop_condition(detected, img, cur_delta)
@@ -363,6 +362,7 @@ def perceptionLoop(hqcar, model, gps, og):
 def controlLoop(gps):
     global KILL_THREAD, _state, _actual_traj
     u = 0; delta = 0; count = 0; countMax = controllerUpdateRate/10
+    ghost_triggered = False  # 鬼探头触发标志，确保只触发一次
 
     ekf = QCarEKF(x_0=initialPose)
     driveController = QCarDriveController(waypointSequence, cyclic=False)
@@ -394,6 +394,12 @@ def controlLoop(gps):
                 x = ekf.x_hat[0,0]; y = ekf.x_hat[1,0]; th = ekf.x_hat[2,0]
                 v = motor_tach
                 p = np.array([x,y]) + np.array([np.cos(th),np.sin(th)])*0.2
+
+                # 鬼探头触发：车辆北行到达y>2.5（距行人前方约4米）时触发行人冲出
+                if not ghost_triggered and y > 1.9:
+                    qlabs_setup_task01.GHOST_TRIGGER.set()
+                    ghost_triggered = True
+                    log('[鬼探头] 车辆到达触发点，行人开始冲出')
 
                 # 先读停车状态，再算控制量（停车时目标速度也要设0，防止速度环积分饱和）
                 with _lock:
