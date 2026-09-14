@@ -119,6 +119,7 @@ _lock = Lock()
 _state = {
     'should_stop': False,
     'stop_reason': '',
+    'led_colors': [[0,1,0]] * 33,
     'yolo_image': None,
     'polar_img': None,
     'patch_img': None,
@@ -294,6 +295,16 @@ def perceptionLoop(hqcar, model, gps, og):
             # ---- YOLO 检测 ----
             detected, img = yolo_detect(hqcar, model)
 
+            # ---- QLabs灯带更新 ----
+            with _lock:
+                led_colors = _state.get('led_colors')
+            if led_colors is not None:
+                try:
+                    with qlabs_setup_task01._QLABS_LOCK:
+                        hqcar.set_led_strip_individual(led_colors, waitForConfirmation=False)
+                except Exception:
+                    pass
+
             # ---- 通过共享 gps 读取雷达（不再单独建 QCarLidar）----
             gps.readLidar()
             if hasattr(gps, 'distances') and gps.distances is not None and len(gps.distances) == og.mPolarPatch:
@@ -314,19 +325,16 @@ def perceptionLoop(hqcar, model, gps, og):
                 # ---- 雷达测距：在YOLO检测框上标注距离 ----
                 if img is not None and len(detected) > 0:
                     img_w = img.shape[1]
-                    CAM_FOV_HALF = np.pi/4  # 相机半视场角45°，总90°
+                    CAM_FOV_HALF = np.pi/4
                     for cls_id, area_pct, (x1,y1,x2,y2) in detected:
                         cx = (x1+x2)/2.0
-                        # 画面cx → 雷达角度（正前方=π/2）
                         target_angle = (cx - img_w/2.0) / (img_w/2.0) * CAM_FOV_HALF + np.pi/2
-                        # 找最近的雷达索引
                         idx = int(np.argmin(np.abs(angles - target_angle)))
-                        # 在该角度附近±3°范围内取最近的有效距离
                         ring = distances[max(0,idx-5):min(len(distances),idx+6)]
                         valid = ring[ring > 0.05]
                         if len(valid) > 0:
                             dist_m = float(valid.min())
-                            if dist_m <= 5.0:  # 超过5米（r_max）不显示，避免读到远处墙壁
+                            if dist_m <= 5.0:
                                 color = YOLO_COLORS[cls_id] if cls_id < len(YOLO_COLORS) else (255,255,255)
                                 cv2.putText(img, f'{dist_m:.1f}m',
                                             (x1+2, y2+15), cv2.FONT_HERSHEY_SIMPLEX,
@@ -457,9 +465,22 @@ def controlLoop(gps):
                 elif not stop_now and now_ctrl < avoid_right:
                     delta -= 0.20  # 阶段3：右转回正
 
-                # LED：刹车时亮刹车灯(4)，其余关
-                LEDs = [0,0,0,0, 1 if stop_now else 0, 0, 0, 0]
+                # QLabs灯带：33个LED，左转左半橙右半绿，右转右半橙左半绿，刹车全红，正常全绿
+                left_signal = 1 if delta > 0.03 else 0
+                right_signal = 1 if delta < -0.03 else 0
+                LEDs = [left_signal, right_signal, left_signal, right_signal,
+                        1 if stop_now else 0, 0, 0, 0]
                 qcar.write(u, delta, LEDs)
+
+                with _lock:
+                    if stop_now:
+                        _state['led_colors'] = [[1,0,0]] * 33  # 全红
+                    elif left_signal:
+                        _state['led_colors'] = [[0,1,0]]*11 + [[1,0.5,0]]*22  # 左转：左绿右橙
+                    elif right_signal:
+                        _state['led_colors'] = [[1,0.5,0]]*11 + [[0,1,0]]*22  # 右转：左橙右绿
+                    else:
+                        _state['led_colors'] = [[0,1,0]] * 33  # 全绿
 
                 # 实时共享转向角，供感知线程判断是否在右转（右转时允许闯红灯）
                 with _lock:
@@ -544,7 +565,7 @@ if __name__ == '__main__':
 
         # ---- 第四步：创建 YOLO 窗口（主线程创建+显示）----
         cv2.namedWindow('result', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('result', 640, 480)
+        cv2.resizeWindow('result', 832, 624)
 
         # ---- 第五步：配置三面板显示窗口（与文件夹12一致，均为图像）----
         scope = MultiScope(rows=2, cols=2, title='环境感知与建图', fps=30)
