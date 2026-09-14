@@ -72,6 +72,13 @@ def _pedestrian_patrol(person, start, other, speed, pause=1.0, initial_delay=0.0
         time.sleep(pause)
 
 
+def _ghost_probe_run(person, start, end, speed, initial_delay):
+    """鬼探头：延迟 initial_delay 秒后，行人突然从 start 以 RUN 速度冲到 end（只冲一次）。"""
+    time.sleep(initial_delay)
+    print('[鬼探头] 行人突然冲出！')
+    _send_move(person, end, speed)
+
+
 def _set_light_color(light, color):
     """线程安全地设置一个红绿灯颜色（加锁，等 ACK）。"""
     try:
@@ -231,7 +238,7 @@ def setup(
     # yaw=0 即灯面朝向南方，北行车辆迎面可见。
     tl_t_upper = QLabsTrafficLight(qlabs)
     tl_t_upper.spawn_id_degrees(
-        actorNumber=6, location=[24.0, 16.5, 0], rotation=[0, 0, 0],
+        actorNumber=6, location=[25.0, 16.5, 0], rotation=[0, 0, 0],
         configuration=0, waitForConfirmation=True)
     tl_t_upper.set_color(tl_t_upper.COLOR_GREEN)
     lights.append(tl_t_upper)
@@ -287,6 +294,15 @@ def setup(
     animals.append(cow)
     patrol_plan.append((cow, cow_start, cow_other, cow.COW_WALK))
 
+    # ---- 鬼探头行人（极端场景：平时藏在点17南侧建筑旁，车辆接近时突然向东冲出）----
+    # spawn在点17南侧(12.0, 29.0)，面朝东；延迟约30秒后以RUN速度向东横穿车道到(25.0, 29.0)
+    # 车辆北行经过x≈22.5，行人从西侧建筑旁冲到车道上
+    ghost_ped = QLabsPerson(qlabs)
+    ghost_ped.spawn_id(actorNumber=14, location=[12.0, 29.0, 0.005],
+                       rotation=[0, 0, math.radians(0)], scale=[1, 1, 1],
+                       configuration=9, waitForConfirmation=True)
+    persons.append(ghost_ped)
+
     # ---- 创建相机并跟随 QCar ----
     hcamera = QLabsFreeCamera(qlabs)
     hcamera.spawn()
@@ -309,6 +325,16 @@ def setup(
         )
         t.start()
         patrol_threads.append(t)
+
+    # ---- 鬼探头行人：延迟30秒后突然以RUN速度向东横穿车道 ----
+    # 车辆北行到达y≈27时（距行人前方约3米），行人从西侧(12.0,29.0)向东冲到(25.0,29.0)
+    ghost_thread = threading.Thread(
+        target=_ghost_probe_run,
+        args=(ghost_ped, [12.0, 29.0, 0.005], [25.0, 29.0, 0.005],
+              ghost_ped.RUN, 31.0),
+        daemon=True
+    )
+    ghost_thread.start()
 
     # ---- 红绿灯颜色循环（后台线程，标准时序：绿→黄→全红→换向）----
     # 南北向组（初始绿灯）：东北ID2、西南ID4、右上T ID6
