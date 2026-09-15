@@ -261,11 +261,11 @@ def setup(
         actorNumber=20, location=[-2.0, -1.5, 0], rotation=[0, 0, 90],
         configuration=0, waitForConfirmation=True)
 
-    # ---- 点20处锥桶（K05：交通设施）----
-    # 点20 QLabs(0, 45)，放在西侧路边（车辆右侧通行）
+    # ---- 点22处锥桶（K05：交通设施）----
+    # 点22在西侧道路 QLabs(-20, 33)，放在道路上
     cone = QLabsTrafficCone(qlabs)
     cone.spawn_id_degrees(
-        actorNumber=21, location=[-0.5, 45.0, 0], rotation=[0, 0, 0],
+        actorNumber=21, location=[-19.7, 30.0, 0], rotation=[0, 0, 0],
         scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
@@ -292,15 +292,14 @@ def setup(
         persons.append(p)
         patrol_plan.append((p, start, other, p.WALK))
 
-    # ---- 点22附近穿行马路的奶牛（K04：动物专用类，可用 move_to 行走）----
-    # 点22在西侧道路 QLabs(-19.9, 29.7)，从点20过来的斜向道路在 x≈-15 处汇入；
-    # 奶牛放在该斜向道路上，沿东西向（x 轴）横穿马路，固定 y=33。
+    # ---- 点20处南北往返的奶牛（K04：动物专用类，可用 move_to 行走）----
+    # 点20 QLabs(0, 45)，奶牛沿南北向（y轴）横穿马路，固定x=0.5。
     animals = []
-    cow_start = [-20.0, 33.0, 0.005]
-    cow_other = [-10.0, 33.0, 0.005]
+    cow_start = [1.0, 39.0, 0.05]
+    cow_other = [1.0, 50.0, 0.05]
     cow = QLabsAnimal(qlabs)
     cow.spawn_id(actorNumber=13, location=cow_start,
-                  rotation=[0, 0, 0], scale=[1, 1, 1],
+                  rotation=[0, 0, math.radians(90)], scale=[1, 1, 1],
                   configuration=cow.COW, waitForConfirmation=True)
     animals.append(cow)
     patrol_plan.append((cow, cow_start, cow_other, cow.COW_WALK))
