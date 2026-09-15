@@ -265,7 +265,13 @@ def setup(
     # 点22在西侧道路 QLabs(-20, 33)，放在道路上
     cone = QLabsTrafficCone(qlabs)
     cone.spawn_id_degrees(
-        actorNumber=21, location=[-19.7, 30.0, 0], rotation=[0, 0, 0],
+        actorNumber=21, location=[-19.7, 33.0, 0], rotation=[0, 0, 0],
+        scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
+
+    # 第二个锥桶
+    cone2 = QLabsTrafficCone(qlabs)
+    cone2.spawn_id_degrees(
+        actorNumber=22, location=[-19.7, 20.0, 0], rotation=[0, 0, 0],
         scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
@@ -325,7 +331,7 @@ def setup(
     # 延迟按车辆实际到达各路口的时间反推，使行人/奶牛正好走到马路中间时与车辆相遇，
     # 体现"识别并避让"。顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
     # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 点22奶牛≈51s
-    patrol_delays = [17.75, 5.25, 5.5, 10.0]
+    patrol_delays = [3.0, 5.25, 5.0, 10.0]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(

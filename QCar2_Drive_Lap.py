@@ -80,7 +80,7 @@ RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
 PEDESTRIAN_STOP_AREA = 1.5
-COW_STOP_AREA = 4.5  # 奶牛体积大，阈值更高，离得更近才停车
+COW_STOP_AREA = 5.5  # 奶牛体积大，阈值更高，离得更近才停车
 PEDESTRIAN_CENTER_TOL = 0.47
 # 终点 stop 牌检测框占画面面积达到该百分比才停车（stop牌在路边，不需中心容差）
 STOP_SIGN_STOP_AREA = 0.5
@@ -359,7 +359,7 @@ def perceptionLoop(hqcar, model, gps, og):
                     cx = (x1+x2)/2.0
                     if abs(cx-cone_img_w/2.0)/cone_img_w <= 0.4:
                         with _lock:
-                            _state['avoid_left_until'] = now_ts + 2.0       # 左转绕开2.0秒
+                            _state['avoid_left_until'] = now_ts + 1.8       # 左转绕开1.8秒
                             _state['avoid_straight_until'] = now_ts + 3.0   # 直行1秒越过锥桶
                             _state['avoid_right_until'] = now_ts + 4.3      # 右转回正1.3秒
 
@@ -463,7 +463,7 @@ def controlLoop(gps):
                 elif not stop_now and now_ctrl < avoid_straight:
                     pass  # 阶段2：直行越过锥桶，不叠加转向
                 elif not stop_now and now_ctrl < avoid_right:
-                    delta -= 0.20  # 阶段3：右转回正
+                    delta -= 0.30  # 阶段3：右转回正
 
                 # QLabs灯带：33个LED，左转左半橙右半绿，右转右半橙左半绿，刹车全红，正常全绿
                 left_signal = 1 if delta > 0.03 else 0
