@@ -339,7 +339,7 @@ def setup(
     # 延迟按车辆实际到达各路口的时间反推，使行人/奶牛正好走到马路中间时与车辆相遇，
     # 体现"识别并避让"。顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
     # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 点22奶牛≈51s
-    patrol_delays = [11.0, 5.25, 5.0, 10.0]
+    patrol_delays = [14.0, 8.25, 8.0, 13.0]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(
@@ -368,7 +368,7 @@ def setup(
     tl_thread = threading.Thread(
         target=_traffic_light_cycle,
         args=(ns_lights, ew_lights),
-        kwargs={'initial_delay': 5.0},  # 红绿灯也滞后5秒，与车辆到达对齐
+        kwargs={'initial_delay': 8.0},  # 红绿灯滞后8秒，与车辆到达对齐
         daemon=True
     )
     tl_thread.start()

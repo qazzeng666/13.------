@@ -52,7 +52,7 @@ import qlabs_setup_task01
 #endregion
 
 # ================ 运行日志 + 原生崩溃捕获（排查无报错退出）================
-import faulthandler, sys as _sys
+import faulthandler
 _LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'run_log.txt')
 _logf = open(_LOG_PATH, 'w', encoding='utf-8', buffering=1)  # 行缓冲，崩溃也能落盘
 faulthandler.enable(_logf)          # 原生段错误时把 C 级堆栈写入日志
@@ -299,7 +299,7 @@ def check_raw_stop_condition(detected, img, steering_delta=0.0, lidar_angles=Non
 
 
 def update_stop_state(raw_stop, reason):
-    global _stop_counter, _go_counter, _state
+    global _stop_counter, _go_counter
     with _lock:
         if raw_stop:
             _stop_counter += 1; _go_counter = 0
@@ -318,7 +318,6 @@ def update_stop_state(raw_stop, reason):
 #region : 感知线程（YOLO + 共享gps雷达 + 建图；只处理数据，不调用GUI）
 
 def perceptionLoop(hqcar, model11, model26, gps, og):
-    global KILL_THREAD, _state
     frame_n = 0
     _fps_t0 = time.time()
     log('感知线程进入主循环')
@@ -440,9 +439,7 @@ def perceptionLoop(hqcar, model11, model26, gps, og):
 #region : 控制线程（EKF + 循迹 + 停车；共享 gps）
 
 def controlLoop(gps, qlabs=None):
-    global KILL_THREAD, _state, _actual_traj
     u = 0; delta = 0; count = 0; countMax = controllerUpdateRate/10
-    stop_start_t = 0.0  # 停车开始时间，用于超时保护
     ghost_triggered = False  # 鬼探头触发标志，确保只触发一次
     night_triggered = False  # 夜晚切换标志，确保只调一次
     day_restored = False     # 回到白天标志，确保只切一次
@@ -479,8 +476,8 @@ def controlLoop(gps, qlabs=None):
                 v = motor_tach
                 p = np.array([x,y]) + np.array([np.cos(th),np.sin(th)])*0.2
 
-                # 鬼探头触发：车辆北行到达y>1.87（距行人前方约4米）时触发行人冲出
-                if not ghost_triggered and y > 1.87:
+                # 鬼探头触发：车辆北行到达y>1.86（距行人前方约4米）时触发行人冲出
+                if not ghost_triggered and y > 1.86:
                     qlabs_setup_task01.GHOST_TRIGGER.set()
                     ghost_triggered = True
                     log('[鬼探头] 车辆到达触发点，行人开始冲出')
@@ -516,9 +513,8 @@ def controlLoop(gps, qlabs=None):
                     stop_reason = _state['stop_reason']
 
                 if stop_now and not was_stopped:
-                    # 刚进入停车：清零速度环积分，记录停车开始时间
+                    # 刚进入停车：清零速度环积分
                     driveController.speedController.reset()
-                    stop_start_t = t
                 was_stopped = stop_now
 
                 if t < startDelay:
@@ -655,6 +651,16 @@ if __name__ == '__main__':
                 log('双YOLO模型已加载（CPU，无GPU）')
         except Exception as e:
             log(f'双YOLO模型已加载（CPU）: {e}')
+
+        # 模型预热：跑一帧dummy图，避免第一帧推理太慢或报错
+        try:
+            import numpy as _np
+            _dummy = _np.random.randint(0, 255, (480, 640, 3), dtype=_np.uint8)
+            model11.predict(source=_dummy, verbose=False, save=False, conf=0.5)
+            model26.predict(source=_dummy, verbose=False, save=False, conf=0.45)
+            log('模型预热完成')
+        except Exception as e:
+            log(f'模型预热跳过: {e}')
 
         # ---- 第三步：创建唯一的 QCarGPS（内部含雷达），等待传感器就绪 ----
         gps = QCarGPS(initialPose=initialPose, calibrate=False)
