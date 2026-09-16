@@ -29,7 +29,7 @@ QCar2 完整一圈行驶 + 双YOLO感知 + 激光雷达成图 + 多决策融合�
   - LED灯带：绿/刹车红/转向分半
   - 终点0→20→0回正停车
 
-运行方式：直接运行本文件。
+运行方式：本文件包含setup文件，直接运行本文件即可。
 """
 import os
 import numpy as np
@@ -133,11 +133,15 @@ _state = {
     'actual_pos': None,
     'actual_th': 0,
     'steering_delta': 0.0,
+    'speed': 0.0,
+    'fps': 0.0,
+    'nearest_dist': '',
 }
 _actual_traj = [[], []]
 
 _stop_counter = 0
 _go_counter = 0
+_speed_buf = []
 
 # 线程未捕获异常钩子：任何线程崩溃都打印完整堆栈，避免静默退出
 def _thread_excepthook(args):
@@ -316,6 +320,7 @@ def update_stop_state(raw_stop, reason):
 def perceptionLoop(hqcar, model11, model26, gps, og):
     global KILL_THREAD, _state
     frame_n = 0
+    _fps_t0 = time.time()
     log('感知线程进入主循环')
     while not KILL_THREAD:
         loop_start = time.time()
@@ -402,6 +407,20 @@ def perceptionLoop(hqcar, model11, model26, gps, og):
             frame_n += 1
             if frame_n % 125 == 0:  # 约每5秒
                 log(f'感知心跳 frame={frame_n} 检测目标数={len(detected)}')
+            # 计算FPS和最近目标距离
+            now_ts = time.time()
+            if frame_n == 1:
+                _fps_t0 = now_ts
+            elapsed = now_ts - _fps_t0
+            fps = frame_n / elapsed if elapsed > 0 else 0
+            nearest = ''
+            for cls_id, area_pct, (x1,y1,x2,y2) in detected:
+                if cls_id in (YoloObject.PEOPLE, YoloObject.COW, YoloObject.RED, YoloObject.CONE):
+                    nearest = f'{YOLO_LABELS[cls_id]} {area_pct:.1f}%'
+                    break
+            with _lock:
+                _state['fps'] = fps
+                _state['nearest_dist'] = nearest
 
         except Exception:
             import traceback
@@ -547,8 +566,12 @@ def controlLoop(gps, qlabs=None):
                         _state['led_colors'] = [[0,1,0]] * 33  # 全绿
 
                 # 实时共享转向角，供感知线程判断是否在右转（右转时允许闯红灯）
+                _speed_buf.append(v)
+                if len(_speed_buf) > 20:
+                    _speed_buf.pop(0)
                 with _lock:
                     _state['steering_delta'] = delta
+                    _state['speed'] = np.mean(_speed_buf[-10:]) if len(_speed_buf) >= 2 else v
 
                 # 每2秒一次心跳，定位退出前最后位置
                 if t - last_hb >= 2:
@@ -737,6 +760,18 @@ if __name__ == '__main__':
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2, cv2.LINE_AA)
                         disp26_small = cv2.resize(disp26, (disp26.shape[1]//2, disp26.shape[0]//2))
                         cv2.imshow('yolo26 - people', disp26_small)
+                    # 信息面板
+                    speed = _state.get('speed', 0)
+                    fps = _state.get('fps', 0)
+                    nearest = _state.get('nearest_dist', '')
+                    info = np.zeros((200, 360, 3), dtype=np.uint8)
+                    cv2.putText(info, f'Speed: {speed:.2f} m/s', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+                    cv2.putText(info, f'GPS: ({pos[0]:.2f}, {pos[1]:.2f})', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2)
+                    cv2.putText(info, f'FPS: {fps:.1f}', (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2)
+                    cv2.putText(info, f'Nearest: {nearest}', (10, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,165,255), 2)
+                    cv2.putText(info, f'STOP: {stop_reason}' if should_stop else 'Status: GO', (10, 170),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255) if should_stop else (0,255,0), 2)
+                    cv2.imshow('Info Panel', info)
                     cv2.waitKey(1)
 
                     if polar_img is not None:
