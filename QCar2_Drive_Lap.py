@@ -712,9 +712,8 @@ if __name__ == '__main__':
                     map_dirty = _state['map_dirty']; _state['map_dirty'] = False
 
                 try:
-                    # 隔帧显示yolo窗口，减轻主线程渲染压力
-                    show_yolo = (gui_n % 2 == 0)
-                    if show_yolo and yolo11_img is not None:
+                    # 每帧显示，缩小一半再渲染降低imshow开销
+                    if yolo11_img is not None:
                         disp11 = yolo11_img.copy()
                         cv2.putText(disp11, 'YOLO11: Traffic Lights / Cone', (10, disp11.shape[0]-10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2, cv2.LINE_AA)
@@ -724,8 +723,9 @@ if __name__ == '__main__':
                         else:
                             cv2.putText(disp11, 'GO', (10,30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2, cv2.LINE_AA)
-                        cv2.imshow('yolo11 - traffic', disp11)
-                    if show_yolo and yolo26_img is not None:
+                        disp11_small = cv2.resize(disp11, (disp11.shape[1]//2, disp11.shape[0]//2))
+                        cv2.imshow('yolo11 - traffic', disp11_small)
+                    if yolo26_img is not None:
                         disp26 = yolo26_img.copy()
                         cv2.putText(disp26, 'YOLO26: Pedestrian / Cow', (10, disp26.shape[0]-10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2, cv2.LINE_AA)
@@ -735,7 +735,8 @@ if __name__ == '__main__':
                         else:
                             cv2.putText(disp26, 'GO', (10,30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2, cv2.LINE_AA)
-                        cv2.imshow('yolo26 - people', disp26)
+                        disp26_small = cv2.resize(disp26, (disp26.shape[1]//2, disp26.shape[0]//2))
+                        cv2.imshow('yolo26 - people', disp26_small)
                     cv2.waitKey(1)
 
                     if polar_img is not None:
