@@ -4,27 +4,32 @@
 
 """
 QCar2_Drive_Lap.py
-QCar2 完整一圈行驶 + 环境感知系统（YOLO视觉 + 激光雷达 + 占据栅格建图）。
+QCar2 完整一圈行驶 + 双YOLO感知 + 激光雷达成图 + 多决策融合。
 
-架构（严格对齐文件夹12 environment_interpretation.py 的成熟方案）：
-  - 只创建【一个】全局 QCarGPS：控制线程用 gps.readGPS()，感知线程用 gps.readLidar()
-    （虚拟 QCar2 的 QCarGPS 内部已自带雷达客户端；再单独建 QCarLidar 会产生两个
-      TCP 客户端抢占同一雷达流，导致 Lidar timeout 并最终崩溃——本文件不再单独建雷达）
-  - 感知线程(daemon)：YOLO推理 + gps.readLidar + 占据栅格建图 + 停车判断（只处理数据）
-  - 控制线程(daemon)：EKF + QCarDriveController 循迹（共享同一个 gps）
-  - 主线程：所有 GUI 绘制（cv2.imshow + MultiScope 刷新），避免 Windows 窗口冻结
+架构：
+  - 感知线程(daemon)：双YOLO推理 + 雷达建图 + 停车判断
+  - 控制线程(daemon)：EKF + QCarDriveController 循迹
+  - 主线程：所有 GUI 绘制（两个YOLO窗 + MultiScope三面板）
+
+双YOLO模型：
+  - model11(yolov11s.pt)：自定义类，只识别红绿灯/锥桶/斑马线
+  - model26(yolo26s.pt)：COCO标准，只识别person(0)→PEOPLE、cow(19)→COW
+  - GPU加速(device=0)，两模型结果合并为detected列表
 
 显示窗口：
-  1. 环境感知与建图（三面板，仿文件夹12）：
-     - 左上：极坐标雷达图  - 左下：局部笛卡尔栅格  - 右侧：全局地图(绿规划+红实际)
-  2. result（仿文件夹4）：YOLO 检测结果（边界框+类别+面积百分比）
+  1. yolo11 - traffic：红绿灯/锥桶检测结果
+  2. yolo26 - people：行人/奶牛检测结果
+  3. 环境感知与建图：极坐标雷达 + 局部栅格 + 全局地图(绿规划+红实际)
 
-停车逻辑（ YOLO 视觉 + 连续帧检测 + 迟滞；雷达建图）：
-  - 红灯连续3帧且够近 → 停车；连续10帧消失或检测到绿灯 → 继续
-  - 行人/奶牛连续3帧在正前方且够近 → 停车；离开后继续
-  （不在此用雷达刹车：城市弯道的路缘/墙体在正前方也会产生成片近点，会误停）
+决策：
+  - 红灯停车（右转忽略红灯）；行人/奶牛正前方够近停车
+  - 锥桶绕行：左转1.8s → 直行 → 右转回正
+  - 鬼探头：车辆y>1.87时触发建筑后行人冲出
+  - 天气：y>3.2夜晚开大灯；y<2.2白天；y<2雨天降速0.2
+  - LED灯带：绿/刹车红/转向分半
+  - 终点0→20→0回正停车
 
-运行方式：直接运行本文件。按 Ctrl+C 安全退出。
+运行方式：直接运行本文件。
 """
 import os
 import numpy as np
@@ -79,14 +84,14 @@ initialPose = [0.0, 0.13, -np.pi / 2]
 RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
-PEDESTRIAN_STOP_AREA = 1.5
-COW_STOP_AREA = 5.5  # 奶牛体积大，阈值更高，离得更近才停车
-PEDESTRIAN_CENTER_TOL = 0.47
+PEDESTRIAN_STOP_AREA = 1.8
+COW_STOP_AREA = 7.0  # 奶牛体积大，阈值更高，离得更近才停车
+PEDESTRIAN_CENTER_TOL = 0.4
 # 终点 stop 牌检测框占画面面积达到该百分比才停车（stop牌在路边，不需中心容差）
 STOP_SIGN_STOP_AREA = 0.5
 # 锥桶绕行：cone在正前方且面积达到该百分比时，触发绕行（向左绕开）
 CONE_AVOID_AREA = 2.5
-# 以下雷达参数仅用于建图显示；雷达不参与刹车（避免弯道路缘误停）
+# 以下雷达参数用于建图显示；
 LIDAR_OBSTACLE_DIST = 1.0
 LIDAR_OBSTACLE_FOV = 36
 LIDAR_OBSTACLE_MIN_POINTS = 6
@@ -120,7 +125,8 @@ _state = {
     'should_stop': False,
     'stop_reason': '',
     'led_colors': [[0,1,0]] * 33,
-    'yolo_image': None,
+    'yolo11_image': None,
+    'yolo26_image': None,
     'polar_img': None,
     'patch_img': None,
     'map_dirty': False,
@@ -206,41 +212,63 @@ class OccupancyGrid:
 
 #region : YOLO 检测（仿文件夹4，只处理数据不显示）
 
-def yolo_detect(hqcar, model):
-    # get_image 与 setup 后台行人/奶牛/红绿灯线程共用同一条 qlabs 套接字，
-    # 必须用 setup 的同一把 _QLABS_LOCK 串行化，否则并发访问会触发原生 access violation。
-    # 注意：pal 的 QCar/GPS/雷达是独立连接，可并发，不在此锁内。
+def yolo_detect(hqcar, model11, model26):
     with qlabs_setup_task01._QLABS_LOCK:
         _, img = hqcar.get_image(4)
     if img is None or img.size == 0:
-        return [], None
-    result = model.predict(source=img, verbose=False, save=False, conf=0.4)
+        return [], None, None
     detected = []
+    img11 = img.copy()
+    img26 = img.copy()
     try:
-        boxes = result[0].boxes
+        # model11：自定义类（红绿灯/锥桶/斑马线等）
+        r11 = model11.predict(source=img, verbose=False, save=False, conf=0.5, device=0)
+        boxes = r11[0].boxes
         for i in range(len(boxes.cls)):
             cls_id = int(boxes.cls[i])
+            # yolo11只管红绿灯/锥桶/斑马线，忽略它识别的行人和奶牛
+            if cls_id in (YoloObject.PEOPLE, YoloObject.COW):
+                continue
             x1, y1, x2, y2 = [int(v) for v in boxes.xyxy[i]]
             area_pct = round((x2-x1)*(y2-y1)/(img.shape[0]*img.shape[1])*100, 3)
             detected.append((cls_id, area_pct, (x1,y1,x2,y2)))
             color = YOLO_COLORS[cls_id] if cls_id < len(YOLO_COLORS) else (255,255,255)
-            cv2.rectangle(img, (x1,y1), (x2,y2), color, 2)
+            cv2.rectangle(img11, (x1,y1), (x2,y2), color, 2)
             label = f'{YOLO_LABELS[cls_id]}({area_pct:.1f}%)'
-            cv2.putText(img, label, (x1+2, max(y1-5,15)),
+            cv2.putText(img11, label, (x1+2, max(y1-5,15)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        # model26：COCO person=0→PEOPLE(4), cow=19→COW(1)
+        r26 = model26.predict(source=img, verbose=False, save=False, conf=0.45, device=0)
+        boxes = r26[0].boxes
+        for i in range(len(boxes.cls)):
+            raw = int(boxes.cls[i])
+            if raw == 0:
+                cls_id = YoloObject.PEOPLE
+            elif raw == 19:
+                cls_id = YoloObject.COW
+            else:
+                continue
+            x1, y1, x2, y2 = [int(v) for v in boxes.xyxy[i]]
+            area_pct = round((x2-x1)*(y2-y1)/(img.shape[0]*img.shape[1])*100, 3)
+            detected.append((cls_id, area_pct, (x1,y1,x2,y2)))
+            color = YOLO_COLORS[cls_id] if cls_id < len(YOLO_COLORS) else (255,255,255)
+            cv2.rectangle(img26, (x1,y1), (x2,y2), color, 2)
+            label = f'{YOLO_LABELS[cls_id]}({area_pct:.1f}%)'
+            cv2.putText(img26, label, (x1+2, max(y1-5,15)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     except Exception:
-        pass
-    return detected, img
+        import traceback
+        log('yolo_detect异常: ' + traceback.format_exc())
+    return detected, img11, img26
 
 #endregion
 
 
 #region : 停车条件判断（连续帧 + 迟滞）
 
-def check_raw_stop_condition(detected, img, steering_delta=0.0):
+def check_raw_stop_condition(detected, img, steering_delta=0.0, lidar_angles=None, lidar_distances=None):
     """只基于 YOLO 视觉判断是否停车（红绿灯/行人/奶牛）。
-    雷达仅用于文件夹12式建图显示，不参与刹车——城市道路弯道处的路缘/墙
-    会在正前方产生成片近点，用雷达刹车会在弯道永久误停。
+    雷达仅用于关联验证：YOLO说前方有行人/奶牛时，查雷达对应方向是否真有近距离障碍。
     steering_delta：当前转向角（正=左转，负=右转）。右转时允许闯红灯（红灯可右转）。
     返回 (raw_stop, reason_en)；reason 用英文以便 cv2.putText 正常显示。"""
     if img is None:
@@ -255,7 +283,7 @@ def check_raw_stop_condition(detected, img, steering_delta=0.0):
             if cls_id == YoloObject.RED and area_pct >= RED_LIGHT_STOP_AREA and not has_green:
                 return True, 'RED LIGHT'
 
-    # 2. 行人/奶牛：正前方 + 够近（奶牛体积大，单独阈值）
+    # 2. 行人/奶牛：正前方 + 面积达阈值（最简条件，确保能停）
     for cls_id, area_pct, (x1,y1,x2,y2) in detected:
         if cls_id in (YoloObject.PEOPLE, YoloObject.COW):
             cx = (x1+x2)/2.0
@@ -285,7 +313,7 @@ def update_stop_state(raw_stop, reason):
 
 #region : 感知线程（YOLO + 共享gps雷达 + 建图；只处理数据，不调用GUI）
 
-def perceptionLoop(hqcar, model, gps, og):
+def perceptionLoop(hqcar, model11, model26, gps, og):
     global KILL_THREAD, _state
     frame_n = 0
     log('感知线程进入主循环')
@@ -293,7 +321,7 @@ def perceptionLoop(hqcar, model, gps, og):
         loop_start = time.time()
         try:
             # ---- YOLO 检测 ----
-            detected, img = yolo_detect(hqcar, model)
+            detected, img11, img26 = yolo_detect(hqcar, model11, model26)
 
             # ---- QLabs灯带更新 ----
             with _lock:
@@ -323,8 +351,8 @@ def perceptionLoop(hqcar, model, gps, og):
                         _state['map_dirty'] = True
 
                 # ---- 雷达测距：在YOLO检测框上标注距离 ----
-                if img is not None and len(detected) > 0:
-                    img_w = img.shape[1]
+                if img11 is not None and len(detected) > 0:
+                    img_w = img11.shape[1]
                     CAM_FOV_HALF = np.pi/4
                     for cls_id, area_pct, (x1,y1,x2,y2) in detected:
                         cx = (x1+x2)/2.0
@@ -336,7 +364,7 @@ def perceptionLoop(hqcar, model, gps, og):
                             dist_m = float(valid.min())
                             if dist_m <= 5.0:
                                 color = YOLO_COLORS[cls_id] if cls_id < len(YOLO_COLORS) else (255,255,255)
-                                cv2.putText(img, f'{dist_m:.1f}m',
+                                cv2.putText(img11, f'{dist_m:.1f}m',
                                             (x1+2, y2+15), cv2.FONT_HERSHEY_SIMPLEX,
                                             0.5, color, 1, cv2.LINE_AA)
 
@@ -348,12 +376,14 @@ def perceptionLoop(hqcar, model, gps, og):
             # ---- 停车条件判断：纯 YOLO 视觉（红绿灯/行人/奶牛）----
             with _lock:
                 cur_delta = _state.get('steering_delta', 0.0)
-            raw_stop, reason = check_raw_stop_condition(detected, img, cur_delta)
+            raw_stop, reason = check_raw_stop_condition(detected, img11, cur_delta,
+                                                        angles if 'angles' in dir() else None,
+                                                        distances if 'distances' in dir() else None)
             update_stop_state(raw_stop, reason)
 
             # ---- 锥桶绕行检测：cone在正前方时，设置左转+右转回正两个窗口 ----
             now_ts = time.time()
-            cone_img_w = img.shape[1] if img is not None else 640
+            cone_img_w = img11.shape[1] if img11 is not None else 640
             for cls_id, area_pct, (x1,y1,x2,y2) in detected:
                 if cls_id == YoloObject.CONE and area_pct >= CONE_AVOID_AREA:
                     cx = (x1+x2)/2.0
@@ -364,8 +394,10 @@ def perceptionLoop(hqcar, model, gps, og):
                             _state['avoid_right_until'] = now_ts + 4.3      # 右转回正1.3秒
 
             with _lock:
-                if img is not None:
-                    _state['yolo_image'] = img
+                if img11 is not None:
+                    _state['yolo11_image'] = img11
+                if img26 is not None:
+                    _state['yolo26_image'] = img26
 
             frame_n += 1
             if frame_n % 125 == 0:  # 约每5秒
@@ -388,10 +420,14 @@ def perceptionLoop(hqcar, model, gps, og):
 
 #region : 控制线程（EKF + 循迹 + 停车；共享 gps）
 
-def controlLoop(gps):
+def controlLoop(gps, qlabs=None):
     global KILL_THREAD, _state, _actual_traj
     u = 0; delta = 0; count = 0; countMax = controllerUpdateRate/10
+    stop_start_t = 0.0  # 停车开始时间，用于超时保护
     ghost_triggered = False  # 鬼探头触发标志，确保只触发一次
+    night_triggered = False  # 夜晚切换标志，确保只调一次
+    day_restored = False     # 回到白天标志，确保只切一次
+    rain_triggered = False   # 雨天标志，确保只切一次
 
     ekf = QCarEKF(x_0=initialPose)
     driveController = QCarDriveController(waypointSequence, cyclic=False)
@@ -424,11 +460,36 @@ def controlLoop(gps):
                 v = motor_tach
                 p = np.array([x,y]) + np.array([np.cos(th),np.sin(th)])*0.2
 
-                # 鬼探头触发：车辆北行到达y>2.5（距行人前方约4米）时触发行人冲出
-                if not ghost_triggered and y > 1.9:
+                # 鬼探头触发：车辆北行到达y>1.87（距行人前方约4米）时触发行人冲出
+                if not ghost_triggered and y > 1.87:
                     qlabs_setup_task01.GHOST_TRIGGER.set()
                     ghost_triggered = True
                     log('[鬼探头] 车辆到达触发点，行人开始冲出')
+
+                # 到达y>3.2时切换为夜晚（只切一次），之后前大灯常亮
+                if not night_triggered and y > 3.2:
+                    from qvl.environment_outdoors import QLabsEnvironmentOutdoors
+                    with qlabs_setup_task01._QLABS_LOCK:
+                        QLabsEnvironmentOutdoors(qlabs).set_time_of_day(21.0)
+                    night_triggered = True
+                    log('[夜晚] 时间切换为21点，前大灯开启')
+
+                # 回到终点y<2.2时切回白天（只切一次），关大灯
+                if night_triggered and not day_restored and y < 2.2:
+                    from qvl.environment_outdoors import QLabsEnvironmentOutdoors
+                    with qlabs_setup_task01._QLABS_LOCK:
+                        QLabsEnvironmentOutdoors(qlabs).set_time_of_day(12.0)
+                    day_restored = True
+                    log('[白天] 时间切回12点，前大灯关闭')
+
+                # 继续到y<2时切换为雨天（只切一次）
+                if day_restored and not rain_triggered and y < 2.0:
+                    from qvl.environment_outdoors import QLabsEnvironmentOutdoors
+                    with qlabs_setup_task01._QLABS_LOCK:
+                        QLabsEnvironmentOutdoors(qlabs).set_weather_preset(
+                            QLabsEnvironmentOutdoors.RAIN)
+                    rain_triggered = True
+                    log('[雨天] 天气切换为雨天')
 
                 # 先读停车状态，再算控制量（停车时目标速度也要设0，防止速度环积分饱和）
                 with _lock:
@@ -436,15 +497,16 @@ def controlLoop(gps):
                     stop_reason = _state['stop_reason']
 
                 if stop_now and not was_stopped:
-                    # 刚进入停车：清零速度环积分，避免长时间停车憋积分、再启动猛冲
+                    # 刚进入停车：清零速度环积分，记录停车开始时间
                     driveController.speedController.reset()
+                    stop_start_t = t
                 was_stopped = stop_now
 
                 if t < startDelay:
                     u, delta = 0, 0
                 else:
                     # 停车期间目标速度给0：误差≈0，积分不再累积，松刹车后平顺起步
-                    target_v = 0.0 if stop_now else v_ref
+                    target_v = 0.0 if stop_now else (0.2 if rain_triggered else v_ref)
                     u, delta = driveController.update(p, th, v, target_v, dt)
 
                 if stop_now:
@@ -469,7 +531,9 @@ def controlLoop(gps):
                 left_signal = 1 if delta > 0.03 else 0
                 right_signal = 1 if delta < -0.03 else 0
                 LEDs = [left_signal, right_signal, left_signal, right_signal,
-                        1 if stop_now else 0, 0, 0, 0]
+                        1 if stop_now else 0, 0,
+                        1 if ((night_triggered and not day_restored) or rain_triggered) else 0,
+                        1 if ((night_triggered and not day_restored) or rain_triggered) else 0]
                 qcar.write(u, delta, LEDs)
 
                 with _lock:
@@ -545,16 +609,29 @@ if __name__ == '__main__':
 
         # ---- 第一步：加载环境 ----
         if not IS_PHYSICAL_QCAR:
-            hqcar, _, _, _, _ = qlabs_setup_task01.setup(
+            hqcar, _, _, _, _, qlabs = qlabs_setup_task01.setup(
                 initialPosition=[0, 1.3, 0],
                 initialOrientation=[0, 0, -np.pi/2]
             )
             log('环境加载完成')
 
-        # ---- 第二步：加载 YOLO 模型 ----
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yolov11s.pt')
-        model = YOLO(model_path)
-        log('YOLO 模型加载完成')
+        # ---- 第二步：加载两个 YOLO 模型 ----
+        # model11：自定义训练，管红绿灯/锥桶/斑马线/停止线
+        # model26：标准COCO，管行人和奶牛（person=0→PEOPLE, cow=19→COW）
+        model11_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yolov11s.pt')
+        model26_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yolo26s.pt')
+        model11 = YOLO(model11_path)
+        model26 = YOLO(model26_path)
+        # 尝试GPU加速
+        try:
+            import torch
+            if torch.cuda.is_available():
+                model11.to('cuda'); model26.to('cuda')
+                log('双YOLO模型已加载（GPU加速）')
+            else:
+                log('双YOLO模型已加载（CPU，无GPU）')
+        except Exception as e:
+            log(f'双YOLO模型已加载（CPU）: {e}')
 
         # ---- 第三步：创建唯一的 QCarGPS（内部含雷达），等待传感器就绪 ----
         gps = QCarGPS(initialPose=initialPose, calibrate=False)
@@ -564,8 +641,10 @@ if __name__ == '__main__':
         log('GPS/激光雷达就绪')
 
         # ---- 第四步：创建 YOLO 窗口（主线程创建+显示）----
-        cv2.namedWindow('result', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('result', 832, 624)
+        cv2.namedWindow('yolo11 - traffic', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('yolo11 - traffic', 832, 624)
+        cv2.namedWindow('yolo26 - people', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('yolo26 - people', 832, 624)
 
         # ---- 第五步：配置三面板显示窗口（与文件夹12一致，均为图像）----
         scope = MultiScope(rows=2, cols=2, title='环境感知与建图', fps=30)
@@ -605,9 +684,9 @@ if __name__ == '__main__':
         log('显示窗口创建完成')
 
         # ---- 第六步：启动后台线程 ----
-        perceptionThread = Thread(target=perceptionLoop, args=(hqcar, model, gps, og),
+        perceptionThread = Thread(target=perceptionLoop, args=(hqcar, model11, model26, gps, og),
                                   daemon=True, name='Perception')
-        controlThread = Thread(target=controlLoop, args=(gps,), daemon=True, name='Control')
+        controlThread = Thread(target=controlLoop, args=(gps, qlabs), daemon=True, name='Control')
         controlThread.start()
         perceptionThread.start()
         log('后台线程已启动，车辆开始行驶')
@@ -618,12 +697,13 @@ if __name__ == '__main__':
             while controlThread.is_alive() and (not KILL_THREAD):
                 if not perceptionThread.is_alive():
                     log('感知线程已退出，正在重启...')
-                    perceptionThread = Thread(target=perceptionLoop, args=(hqcar, model, gps, og),
+                    perceptionThread = Thread(target=perceptionLoop, args=(hqcar, model11, model26, gps, og),
                                               daemon=True, name='Perception')
                     perceptionThread.start()
 
                 with _lock:
-                    yolo_img = _state['yolo_image']
+                    yolo11_img = _state['yolo11_image']
+                    yolo26_img = _state['yolo26_image']
                     polar_img = _state['polar_img']
                     patch_img = _state['patch_img']
                     xs = list(_actual_traj[0]); ys = list(_actual_traj[1])
@@ -632,15 +712,30 @@ if __name__ == '__main__':
                     map_dirty = _state['map_dirty']; _state['map_dirty'] = False
 
                 try:
-                    if yolo_img is not None:
-                        disp = yolo_img.copy()
+                    # 隔帧显示yolo窗口，减轻主线程渲染压力
+                    show_yolo = (gui_n % 2 == 0)
+                    if show_yolo and yolo11_img is not None:
+                        disp11 = yolo11_img.copy()
+                        cv2.putText(disp11, 'YOLO11: Traffic Lights / Cone', (10, disp11.shape[0]-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2, cv2.LINE_AA)
                         if should_stop:
-                            cv2.putText(disp, f'STOP: {stop_reason}', (10,30),
+                            cv2.putText(disp11, f'STOP: {stop_reason}', (10,30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2, cv2.LINE_AA)
                         else:
-                            cv2.putText(disp, 'GO', (10,30),
+                            cv2.putText(disp11, 'GO', (10,30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2, cv2.LINE_AA)
-                        cv2.imshow('result', disp)
+                        cv2.imshow('yolo11 - traffic', disp11)
+                    if show_yolo and yolo26_img is not None:
+                        disp26 = yolo26_img.copy()
+                        cv2.putText(disp26, 'YOLO26: Pedestrian / Cow', (10, disp26.shape[0]-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2, cv2.LINE_AA)
+                        if should_stop:
+                            cv2.putText(disp26, f'STOP: {stop_reason}', (10,30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2, cv2.LINE_AA)
+                        else:
+                            cv2.putText(disp26, 'GO', (10,30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2, cv2.LINE_AA)
+                        cv2.imshow('yolo26 - people', disp26)
                     cv2.waitKey(1)
 
                     if polar_img is not None:
@@ -683,6 +778,14 @@ if __name__ == '__main__':
             pass
         cv2.destroyAllWindows()
         if not IS_PHYSICAL_QCAR:
+            # 程序结束恢复晴朗白天，避免下次运行残留雨天/夜晚
+            try:
+                from qvl.environment_outdoors import QLabsEnvironmentOutdoors
+                env = QLabsEnvironmentOutdoors(qlabs)
+                env.set_weather_preset(QLabsEnvironmentOutdoors.CLEAR_SKIES)
+                env.set_time_of_day(12.0)
+            except Exception:
+                pass
             qlabs_setup_task01.terminate()
         log('完成。')
 

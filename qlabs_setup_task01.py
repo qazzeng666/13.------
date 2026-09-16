@@ -1,4 +1,19 @@
-# region: package imports
+#region : package imports
+"""
+qlabs_setup_task01.py
+QCar2 完整一圈行驶的场景布置（Cityscape）。
+
+布置内容：
+  - 6个红绿灯（actor 1-6）
+  - 3个斑马线往返行人：ID10中央西、ID11中央北、ID12右上三叉
+  - 鬼探头行人ID14：车辆y>1.87时从建筑后冲出（GHOST_TRIGGER）
+  - 奶牛ID13：QLabs(-6,41~52)南北往返
+  - 锥桶ID21：QLabs(-19.7,28)，scale=[3,3,3]
+  - stop牌ID20：装饰
+  - 天气/时间事件：y>3.2夜晚、y<2.2白天、y<2雨天
+
+运行方式：先跑本文件布置场景，再跑QCar2_Drive_Lap.py。
+"""
 import os
 import sys
 import math
@@ -262,16 +277,9 @@ def setup(
         configuration=0, waitForConfirmation=True)
 
     # ---- 点22处锥桶（K05：交通设施）----
-    # 点22在西侧道路 QLabs(-20, 33)，放在道路上
     cone = QLabsTrafficCone(qlabs)
     cone.spawn_id_degrees(
-        actorNumber=21, location=[-19.7, 33.0, 0], rotation=[0, 0, 0],
-        scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
-
-    # 第二个锥桶
-    cone2 = QLabsTrafficCone(qlabs)
-    cone2.spawn_id_degrees(
-        actorNumber=22, location=[-19.7, 20.0, 0], rotation=[0, 0, 0],
+        actorNumber=21, location=[-19.7, 28.0, 0], rotation=[0, 0, 0],
         scale=[3, 3, 3], configuration=0, waitForConfirmation=True)
 
     # ---- 过斑马线的行人（K04：人/动物专用类，可用 move_to 行走）----
@@ -301,11 +309,11 @@ def setup(
     # ---- 点20处南北往返的奶牛（K04：动物专用类，可用 move_to 行走）----
     # 点20 QLabs(0, 45)，奶牛沿南北向（y轴）横穿马路，固定x=0.5。
     animals = []
-    cow_start = [1.0, 39.0, 0.05]
-    cow_other = [1.0, 50.0, 0.05]
+    cow_start = [-6.0, 41.0, 0.1]
+    cow_other = [-6.0, 52.0, 0.1]
     cow = QLabsAnimal(qlabs)
     cow.spawn_id(actorNumber=13, location=cow_start,
-                  rotation=[0, 0, math.radians(90)], scale=[1, 1, 1],
+                  rotation=[0, 0, 0], scale=[1, 1, 1],
                   configuration=cow.COW, waitForConfirmation=True)
     animals.append(cow)
     patrol_plan.append((cow, cow_start, cow_other, cow.COW_WALK))
@@ -331,7 +339,7 @@ def setup(
     # 延迟按车辆实际到达各路口的时间反推，使行人/奶牛正好走到马路中间时与车辆相遇，
     # 体现"识别并避让"。顺序：[中央西行人(idx0), 中央北行人(idx1), 右上三叉行人(idx2), 奶牛(idx3)]
     # 车辆到达时刻：中央西≈54s / 中央北≈52s / 右上三叉≈21s / 点22奶牛≈51s
-    patrol_delays = [3.0, 5.25, 5.0, 10.0]
+    patrol_delays = [11.0, 5.25, 5.0, 10.0]
     patrol_threads = []
     for idx, (p, start, other, speed) in enumerate(patrol_plan):
         t = threading.Thread(
@@ -366,7 +374,7 @@ def setup(
     tl_thread.start()
 
     # 返回控制句柄，供后续决策/红绿灯切换脚本使用
-    return hqcar, lights, crosswalks, persons, animals
+    return hqcar, lights, crosswalks, persons, animals, qlabs
 
 
 def terminate():
