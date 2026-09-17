@@ -77,13 +77,16 @@ python QCar2_Drive_Lap.py
 
 | 参数 | 当前值 | 说明 |
 |------|--------|------|
+| `RED_LIGHT_STOP_AREA` | 0.3 | 红灯检测框面积阈值（占画面百分比） |
 | `PEDESTRIAN_STOP_AREA` | 1.8 | 行人检测框面积阈值（占画面百分比） |
-| `COW_STOP_AREA` | 5.0 | 奶牛检测框面积阈值 |
+| `COW_STOP_AREA` | 9.0 | 奶牛检测框面积阈值 |
 | `PEDESTRIAN_CENTER_TOL` | 0.4 | 正前方检测角度容忍度 |
 | `STOP_FRAMES` | 2 | 连续检测几帧才停车 |
 | `GO_FRAMES` | 6 | 目标消失几帧后恢复行驶 |
 | `v_ref` | 0.3 | 正常行驶速度（m/s） |
 | 雨天速度 | 0.2 | 雨天行驶速度（m/s） |
+| yolov11s 置信度 | 0.4 | 红绿灯/锥桶模型置信度 |
+| yolo26s 置信度 | 0.45 | 行人/奶牛模型置信度 |
 
 ## 常见问题
 
