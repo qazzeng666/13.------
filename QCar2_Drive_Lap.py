@@ -85,7 +85,7 @@ RED_LIGHT_STOP_AREA = 0.3
 # 行人/奶牛检测框占画面面积达到该百分比才停车。值越大→停得越近，越小→停得越远。
 # （面积与距离平方成反比；5% 时约在 2.2m 外停车，8% 约停在 1.7m 处，可按实车微调）
 PEDESTRIAN_STOP_AREA = 1.8
-COW_STOP_AREA = 9.0  # 奶牛体积大，阈值更高，离得更近才停车
+COW_STOP_AREA = 7.0  # 奶牛体积大，阈值更高，离得更近才停车
 PEDESTRIAN_CENTER_TOL = 0.4
 # 终点 stop 牌检测框占画面面积达到该百分比才停车（stop牌在路边，不需中心容差）
 STOP_SIGN_STOP_AREA = 0.5

@@ -79,7 +79,7 @@ python QCar2_Drive_Lap.py
 |------|--------|------|
 | `RED_LIGHT_STOP_AREA` | 0.3 | 红灯检测框面积阈值（占画面百分比） |
 | `PEDESTRIAN_STOP_AREA` | 1.8 | 行人检测框面积阈值（占画面百分比） |
-| `COW_STOP_AREA` | 9.0 | 奶牛检测框面积阈值 |
+| `COW_STOP_AREA` | 7.0 | 奶牛检测框面积阈值 |
 | `PEDESTRIAN_CENTER_TOL` | 0.4 | 正前方检测角度容忍度 |
 | `STOP_FRAMES` | 2 | 连续检测几帧才停车 |
 | `GO_FRAMES` | 6 | 目标消失几帧后恢复行驶 |
