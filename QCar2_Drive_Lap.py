@@ -226,7 +226,7 @@ def yolo_detect(hqcar, model11, model26):
     img26 = img.copy()
     try:
         # model11：自定义类（红绿灯/锥桶/斑马线等）
-        r11 = model11.predict(source=img, verbose=False, save=False, conf=0.5, device=0)
+        r11 = model11.predict(source=img, verbose=False, save=False, conf=0.4, device=0)
         boxes = r11[0].boxes
         for i in range(len(boxes.cls)):
             cls_id = int(boxes.cls[i])
@@ -656,7 +656,7 @@ if __name__ == '__main__':
         try:
             import numpy as _np
             _dummy = _np.random.randint(0, 255, (480, 640, 3), dtype=_np.uint8)
-            model11.predict(source=_dummy, verbose=False, save=False, conf=0.5)
+            model11.predict(source=_dummy, verbose=False, save=False, conf=0.4)
             model26.predict(source=_dummy, verbose=False, save=False, conf=0.45)
             log('模型预热完成')
         except Exception as e:

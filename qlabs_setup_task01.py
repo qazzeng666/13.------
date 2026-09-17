@@ -247,15 +247,11 @@ def setup(
 
     # ---- 右侧纵向道路上的两处斑马线（对应图上右侧红蓝线区域）----
     side_crosswalks = []
-    for _ in range(2):
+    for _ in range(1):
         side_crosswalks.append(QLabsCrosswalk(qlabs))
     # 右上三叉路口处斑马线（configuration=0 为白色条纹斑马线）
     side_crosswalks[0].spawn_degrees(
         location=[21.733, 16.0, 0.02], rotation=[0, 0, 0],
-        scale=[1, 1, 0.75], configuration=0, waitForConfirmation=True)
-    # 右下三叉路口处斑马线
-    side_crosswalks[1].spawn_degrees(
-        location=[21.733, 3.347, 0.02], rotation=[0, 0, 0],
         scale=[1, 1, 0.75], configuration=0, waitForConfirmation=True)
 
     # ---- 右上三叉（T 型）路口：只保留 1 个红绿灯，面向南方（服务由南向北来车）----
