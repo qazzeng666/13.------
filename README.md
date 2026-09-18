@@ -101,7 +101,7 @@ python QCar2_Drive_Lap.py
 ## 常见问题
 
 1. **`No module named 'quanser'`**：需使用安装了 Quanser pal 库的 Python 3.11 环境运行。
-2. **YOLO 识别慢/帧率低**：确认 PyTorch 为 CUDA 版本（`torch.cuda.is_available()` 返回 True）。
+2. **YOLO 识别慢/帧率低**：确认 PyTorch 为 CUDA 版本（`torch.cuda.is_available()` 返回 True）。注意：如果YOLO没有进行识别，很可能就是这里的问题。
 3. **QLabs 连接失败**：确保 QLabs 已启动且 Cityscape 场景已加载。
 4. **车辆撞到行人/锥桶**：适当调大 `PEDESTRIAN_STOP_AREA` 或调整锥桶绕行参数。
 5. **程序直接闪退无报错**：可能是多线程同时访问 QLabs，确保全局锁已启用。
